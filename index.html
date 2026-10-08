@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Проверка полки</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f4f5f7;--card:#fff;--text:#1b1f24;--muted:#6a7380;--line:#dfe3e8;--accent:#1f6feb;--on:#fff;--inp:#fff;
+--bad:#fde7e7;--warn:#fff4d1;--ok:#e3f6e8;--q:#eceef1}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171b;--card:#1d2127;--text:#e8ebef;--muted:#98a1ad;--line:#30363e;--accent:#4c8dff;--on:#0b1220;--inp:#14171b;--bad:#3b1a1a;--warn:#3a3112;--ok:#16301f;--q:#2a2f36}}
+:root[data-theme=dark]{--bg:#14171b;--card:#1d2127;--text:#e8ebef;--muted:#98a1ad;--line:#30363e;--accent:#4c8dff;--on:#0b1220;--inp:#14171b;--bad:#3b1a1a;--warn:#3a3112;--ok:#16301f;--q:#2a2f36}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 -apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+main{max-width:760px;margin:0 auto;padding:14px 12px 40px}h1{font-size:20px;margin:4px 0}h2{font-size:17px;margin:12px 0 6px}
+.sub,.hint{color:var(--muted);font-size:13px}.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.btn{appearance:none;border:1px solid var(--line);background:var(--card);color:var(--text);font:inherit;font-weight:600;padding:12px 14px;border-radius:12px;min-height:46px;cursor:pointer}
+.btn.p{background:var(--accent);color:var(--on);border-color:var(--accent)}.btn.big{width:100%;font-size:17px}.btn:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>.btn{flex:1 1 130px}
+input[type=text],input[type=password]{font:inherit;color:var(--text);background:var(--inp);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%;min-height:40px;margin-top:4px}
+.st{font-size:14px;color:var(--muted);margin-top:8px;white-space:pre-wrap}.st.e{color:#c62828}
+.pills{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.pill{padding:4px 10px;border-radius:999px;border:1px solid var(--line);font-size:14px}
+.it{border:1px solid var(--line);border-radius:12px;padding:10px;margin-bottom:6px;overflow-wrap:anywhere}
+.it.empty{background:var(--bad)}.it.low{background:var(--warn)}.it.ok{background:var(--ok)}.it.nt{background:var(--q)}.it.done{opacity:.45}
+.it label{display:flex;gap:8px;align-items:flex-start}.it input{width:22px;height:22px;flex:none}.m{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+<h1>🛒 Проверка полки</h1>
+<p class="sub">Сними участок полки с ценниками. Программа покажет, где пусто, где мало и что стоит без ценника.</p>
+
+<section class="card">
+  <details id="set"><summary><b>⚙️ Ключ Gemini</b></summary>
+    <input id="key" type="password" placeholder="AIza..." autocomplete="off">
+    <input id="model" type="text" placeholder="модель, например gemini-3.8-flash" autocapitalize="off">
+    <div class="row" style="margin-top:8px"><button class="btn" id="save">Сохранить</button></div>
+    <div class="hint">Если ключ уже введён в «Приёмке» на этом же сайте, он подхватится сам.</div>
+  </details>
+</section>
+
+<section class="card">
+  <input id="f1" type="file" accept="image/*" capture="environment" hidden>
+  <input id="f2" type="file" accept="image/*" multiple hidden>
+  <div class="row"><button class="btn" id="cam">📷 Снять полку</button><button class="btn" id="gal">🖼️ Из галереи</button></div>
+  <div class="st" id="cnt"></div>
+  <button class="btn p big" id="go" style="margin-top:8px" disabled>Проверить полку</button>
+  <div class="st" id="st"></div>
+  <div class="hint">Снимай по 1-2 метра полки так, чтобы ценники читались. Снимки одной секции не должны сильно перекрываться. Лучше ровно, без бликов.</div>
+</section>
+
+<section class="card">
+  <div class="pills" id="pills"></div>
+  <div class="row"><button class="btn" id="copy">📋 Список на выкладку</button><button class="btn" id="clr">Очистить</button></div>
+  <div id="res"></div>
+</section>
+</main>
+<script>
+(function(){
+"use strict";
+var $=function(i){return document.getElementById(i)},API="https://generativelanguage.googleapis.com/v1beta/";
+function g(k){try{return localStorage.getItem(k)}catch(e){return null}}
+function s(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+var key=g("priemka2_key")||"",model=g("priemka2_model")||"gemini-3.8-flash",photos=[],R=[];
+try{R=JSON.parse(g("polka_last")||"[]")}catch(e){R=[]}
+function el(t,c,x){var e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e}
+function st(t,e){$("st").textContent=t||"";$("st").className="st"+(e?" e":"")}
+function norm(x){return String(x==null?"":x).replace(/\s+/g," ").trim()}
+function save(){s("polka_last",JSON.stringify(R))}
+
+$("key").value=key;$("model").value=model;if(!key)$("set").open=true;
+$("save").onclick=function(){key=$("key").value.trim();model=$("model").value.trim()||model;s("priemka2_key",key);s("priemka2_model",model);st("Сохранено.");btn()};
+function btn(){$("go").disabled=!(photos.length&&key);$("cnt").textContent=photos.length?"Снимков: "+photos.length:""}
+function add(l){Array.prototype.forEach.call(l,function(f){if(photos.length<20)photos.push(f)});btn()}
+$("cam").onclick=function(){$("f1").click()};$("gal").onclick=function(){$("f2").click()};
+$("f1").onchange=function(){add($("f1").files);$("f1").value=""};$("f2").onchange=function(){add($("f2").files);$("f2").value=""};
+
+function b64(file,max){return createImageBitmap(file,{imageOrientation:"from-image"}).then(function(b){
+ var k=Math.min(1,max/Math.max(b.width,b.height)),c=document.createElement("canvas");c.width=Math.round(b.width*k);c.height=Math.round(b.height*k);
+ c.getContext("2d").drawImage(b,0,0,c.width,c.height);if(b.close)b.close();
+ return new Promise(function(r){c.toBlob(r,"image/jpeg",.9)})}).then(function(bl){return new Promise(function(r){var f=new FileReader();f.onload=function(){r(String(f.result).split(",")[1])};f.readAsDataURL(bl)})})}
+
+var PROMPT="Это фото участка полки продуктового магазина. Прочитай каждый ценник и определи, стоит ли у него товар. "+
+"Для каждого ценника верни {\"name\":\"название с ценника\",\"price\":\"цена или пустая строка\",\"status\":\"ok|low|empty\",\"conf\":\"high|medium|low\",\"note\":\"коротко или пустая строка\"}. "+
+"status: empty — за ценником на полке нет ни одной единицы этого товара; low — осталось 1-2 штуки или полка почти пуста; ok — товара достаточно. "+
+"Если рядом с ценником стоит ДРУГОЙ товар, отметь это в note и поставь conf low. "+
+"Отдельно перечисли товары, у которых нет ценника, в no_tag: [{\"description\":\"что за товар\"}]. "+
+"unreadable — число ценников, которые не удалось прочитать. Не додумывай то, чего не видно. "+
+"Ответ ТОЛЬКО JSON: {\"tags\":[...],\"no_tag\":[...],\"unreadable\":0}";
+
+function why(e){var c=e.code,m=e.msg||"";
+ if(c==="net")return"Нет связи с Google. Проверь интернет и обходной путь (DNS/VPN).";
+ if(c===400)return"Ключ не подходит или запрос неверен. "+m;
+ if(c===403||/location/i.test(m))return"Google отказал в доступе: проверь обходной путь.\n"+m;
+ if(c===404)return"Такой модели нет. Укажи другую в настройках.\n"+m;
+ if(c===429)return"Лимит запросов. Подожди минуту и повтори.";
+ if(c===503||c===500)return"Gemini перегружен. Повтори через минуту.";
+ return"Ошибка: "+(m||c)}
+function sleep(ms){return new Promise(function(r){setTimeout(r,ms)})}
+async function ask(parts){
+ var d=[5000,15000,30000];
+ for(var a=0;;a++){
+  var res;
+  try{res=await fetch(API+"models/"+encodeURIComponent(model)+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},
+   body:JSON.stringify({contents:[{role:"user",parts:parts}],generationConfig:{temperature:0,responseMimeType:"application/json"}})})}
+  catch(e){throw{code:"net"}}
+  if(!res.ok){var m="";try{m=(await res.json()).error.message}catch(e){}
+   if((res.status===503||res.status===500)&&a<d.length){await sleep(d[a]);continue}
+   throw{code:res.status,msg:m}}
+  var j=await res.json(),t=((j.candidates||[])[0]||{}).content;t=t&&t.parts?t.parts.map(function(p){return p.text||""}).join(""):"";
+  t=t.replace(/```json|```/g,"").trim();
+  try{return JSON.parse(t)}catch(e){var i=t.indexOf("{"),k=t.lastIndexOf("}");if(i>=0&&k>i)try{return JSON.parse(t.slice(i,k+1))}catch(x){}throw{code:"json",msg:"Не удалось разобрать ответ, повтори."}}
+ }}
+
+var rank={ok:0,low:1,empty:2};
+function merge(o){
+ (o.tags||[]).forEach(function(t){var n=norm(t.name);if(!n)return;var st=/^(ok|low|empty)$/.test(t.status)?t.status:"low";
+  var ex=R.find(function(r){return r.kind==="tag"&&r.name.toLowerCase()===n.toLowerCase()&&r.price===norm(t.price)});
+  if(ex){if(rank[st]<rank[ex.status]){ex.status=st}return}
+  R.push({kind:"tag",name:n,price:norm(t.price),status:st,conf:t.conf||"medium",note:norm(t.note),done:false})});
+ (o.no_tag||[]).forEach(function(t){var d=norm(t.description);if(d&&!R.some(function(r){return r.kind==="nt"&&r.name===d}))R.push({kind:"nt",name:d,status:"nt",done:false})});
+ var u=Number(o.unreadable)||0;if(u)R.push({kind:"un",name:"Нечитаемых ценников: "+u+" (переснять ближе)",status:"un",done:false})}
+
+var busy=false;
+$("go").onclick=async function(){
+ if(busy)return;busy=true;$("go").disabled=true;var ok=0;
+ try{for(var i=0;i<photos.length;i++){st("Смотрю снимок "+(i+1)+" из "+photos.length+"…");
+  var o=await ask([{text:PROMPT},{inline_data:{mime_type:"image/jpeg",data:await b64(photos[i],2560)}}]);merge(o);ok++;save();render()}
+  photos=[];st("Готово: обработано снимков — "+ok+". Проверь результат ниже.")}
+ catch(e){photos=photos.slice(ok);st("Обработано: "+ok+".\n"+why(e),true)}
+ busy=false;btn()};
+
+function label(r){return r.name+(r.price?" — "+r.price+" ₽":"")}
+function render(){
+ var box=$("res"),pl=$("pills");box.textContent="";pl.textContent="";
+ var c={empty:0,low:0,ok:0,nt:0};R.forEach(function(r){if(!r.done&&c[r.status]!=null)c[r.status]++});
+ if(!R.length){box.appendChild(el("div","hint","Пока пусто."));return}
+ [["❌ Пусто: "+c.empty],["⚠️ Мало: "+c.low],["❓ Без ценника: "+c.nt],["✅ Есть: "+c.ok]].forEach(function(x){pl.appendChild(el("span","pill",x[0]))});
+ var groups=[["empty","Пусто: выложить"],["low","Мало: докладывать"],["nt","Товар без ценника"],["un","Не прочитано"],["ok","Есть"]];
+ groups.forEach(function(gr){var items=R.filter(function(r){return r.status===gr[0]});if(!items.length)return;
+  box.appendChild(el("h2",null,gr[1]+" ("+items.length+")"));
+  items.forEach(function(r){var d=el("div","it "+(r.status==="un"?"nt":r.status)+(r.done?" done":""));
+   if(r.status==="empty"||r.status==="low"){var l=el("label"),cb=el("input");cb.type="checkbox";cb.checked=!!r.done;
+    cb.onchange=function(){r.done=cb.checked;save();render()};l.appendChild(cb);var t=el("div");t.appendChild(document.createTextNode(label(r)));
+    if(r.note||r.conf==="low")t.appendChild(el("div","m",(r.note||"")+(r.conf==="low"?" Нейросеть не уверена, проверь глазами.":"")));l.appendChild(t);d.appendChild(l)}
+   else{d.appendChild(el("div",null,r.status==="ok"?label(r):r.name));if(r.status==="ok"&&r.note)d.appendChild(el("div","m",r.note))}
+   box.appendChild(d)})})}
+$("copy").onclick=function(){
+ var L=R.filter(function(r){return(r.status==="empty"||r.status==="low")&&!r.done}).map(function(r){return"- "+(r.status==="empty"?"ПУСТО: ":"мало: ")+label(r)});
+ var t=L.length?"Выложить на полку:\n"+L.join("\n"):"Выкладывать нечего.";
+ (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){st("Список скопирован.")}).catch(function(){prompt("Скопируй список:",t)})};
+$("clr").onclick=function(){if(confirm("Очистить результаты?")){R=[];save();render()}};
+render();btn();
+})();
+</script>
+</body>
+</html>
