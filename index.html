@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Проверка полки</title>
+<title>Полка по каталогу</title>
 <style>
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
 --bg:#f4f5f7;--card:#fff;--text:#1b1f24;--muted:#6a7380;--line:#dfe3e8;--accent:#1f6feb;--on:#fff;--inp:#fff;
@@ -27,9 +27,8 @@ input[type=text],input[type=password]{font:inherit;color:var(--text);background:
 </head>
 <body>
 <main>
-<h1>🛒 Проверка полки</h1>
-<p class="sub">Сними участок полки с ценниками. Программа покажет, где пусто, где мало и что стоит без ценника.</p>
-
+<h1>🛒 Полка по каталогу</h1>
+<p class="sub">Сфотографируй распечатку каталога, потом полки раздела. Программа покажет, чего из того, что есть по учёту, нет на полке.</p>
 <section class="card">
   <details id="set"><summary><b>⚙️ Ключ Gemini</b></summary>
     <input id="key" type="password" placeholder="AIza..." autocomplete="off">
@@ -38,24 +37,34 @@ input[type=text],input[type=password]{font:inherit;color:var(--text);background:
     <div class="hint">Если ключ уже введён в «Приёмке» на этом же сайте, он подхватится сам.</div>
   </details>
 </section>
-
-<section class="card">
-  <input id="f1" type="file" accept="image/*" capture="environment" hidden>
-  <input id="f2" type="file" accept="image/*" multiple hidden>
+<section class="card"><h2>1. Каталог (распечатка)</h2>
+  <input id="cf1" type="file" accept="image/*" capture="environment" hidden><input id="cf2" type="file" accept="image/*" multiple hidden>
+  <div class="row"><button class="btn" id="ccam">📷 Снять лист</button><button class="btn" id="cgal">🖼️ Из галереи</button></div>
+  <div class="st" id="ccnt"></div>
+  <button class="btn p big" id="cgo" style="margin-top:8px" disabled>Прочитать каталог</button>
+  <div class="st" id="cst"></div>
+  <div class="pills" id="csum"></div>
+  <div class="row"><button class="btn" id="cclr">Очистить каталог</button></div>
+  <div class="hint">Снимай страницы по порядку, ровно и сверху. Дубли строк и нулевые остатки программа учтёт сама.</div>
+</section>
+<section class="card"><h2>2. Полка</h2>
+  <label class="hint" for="sec">Раздел, который проверяешь</label>
+  <select id="sec" style="font:inherit;padding:10px;border-radius:8px;width:100%;margin:4px 0 8px"></select>
+  <input id="f1" type="file" accept="image/*" capture="environment" hidden><input id="f2" type="file" accept="image/*" multiple hidden>
   <div class="row"><button class="btn" id="cam">📷 Снять полку</button><button class="btn" id="gal">🖼️ Из галереи</button></div>
   <div class="st" id="cnt"></div>
   <button class="btn p big" id="go" style="margin-top:8px" disabled>Проверить полку</button>
   <div class="st" id="st"></div>
-  <div class="hint">Снимай по 1-2 метра полки так, чтобы ценники читались. Снимки одной секции не должны сильно перекрываться. Лучше ровно, без бликов.</div>
+  <div class="hint">Сними ВЕСЬ раздел (все полки и стеллажи), иначе то, что не попало в кадр, попадёт в «не найдено».</div>
 </section>
-
-<section class="card">
+<section class="card"><h2>Результат</h2>
   <div class="pills" id="pills"></div>
-  <div class="row"><button class="btn" id="copy">📋 Список на выкладку</button><button class="btn" id="clr">Очистить</button></div>
+  <div class="row"><button class="btn" id="copy">📋 Список на выкладку</button><button class="btn" id="clr">Сбросить результат</button></div>
   <div id="res"></div>
 </section>
 </main>
 <script>
+
 (function(){
 "use strict";
 var $=function(i){return document.getElementById(i)},API="https://generativelanguage.googleapis.com/v1beta/";
@@ -112,45 +121,86 @@ async function ask(parts){
   try{return JSON.parse(t)}catch(e){var i=t.indexOf("{"),k=t.lastIndexOf("}");if(i>=0&&k>i)try{return JSON.parse(t.slice(i,k+1))}catch(x){}throw{code:"json",msg:"Не удалось разобрать ответ, повтори."}}
  }}
 
-var rank={ok:0,low:1,empty:2};
-function merge(o){
- (o.tags||[]).forEach(function(t){var n=norm(t.name);if(!n)return;var st=/^(ok|low|empty)$/.test(t.status)?t.status:"low";
-  var ex=R.find(function(r){return r.kind==="tag"&&r.name.toLowerCase()===n.toLowerCase()&&r.price===norm(t.price)});
-  if(ex){if(rank[st]<rank[ex.status]){ex.status=st}return}
-  R.push({kind:"tag",name:n,price:norm(t.price),status:st,conf:t.conf||"medium",note:norm(t.note),done:false})});
- (o.no_tag||[]).forEach(function(t){var d=norm(t.description);if(d&&!R.some(function(r){return r.kind==="nt"&&r.name===d}))R.push({kind:"nt",name:d,status:"nt",done:false})});
- var u=Number(o.unreadable)||0;if(u)R.push({kind:"un",name:"Нечитаемых ценников: "+u+" (переснять ближе)",status:"un",done:false})}
 
-var busy=false;
+var CAT=[],RES={sec:"",items:{},zero:[],extra:[],done:{}},cph=[],cbusy=false,busy=false;
+try{CAT=JSON.parse(g("polka2_cat")||"[]")}catch(e){}
+try{var rr=JSON.parse(g("polka2_res")||"null");if(rr&&rr.items)RES=rr}catch(e){}
+function sv(){s("polka2_cat",JSON.stringify(CAT));s("polka2_res",JSON.stringify(RES))}
+function cst(t,e){$("cst").textContent=t||"";$("cst").className="st"+(e?" e":"")}
+function cbtn(){$("cgo").disabled=!(cph.length&&key);$("ccnt").textContent=cph.length?"Листов: "+cph.length:""}
+function cadd(l){Array.prototype.forEach.call(l,function(f){if(cph.length<30)cph.push(f)});cbtn()}
+$("ccam").onclick=function(){$("cf1").click()};$("cgal").onclick=function(){$("cf2").click()};
+$("cf1").onchange=function(){cadd($("cf1").files);$("cf1").value=""};$("cf2").onchange=function(){cadd($("cf2").files);$("cf2").value=""};
+var CP="На фото страница печатного прайс-листа магазина: таблица с колонками артикул, наименование, ед, остаток, цена, акция. Жирные заголовки (например БАКАЛЕЯ, БЕЗАЛКОГОЛЬНЫЕ НАПИТКИ) это разделы. "+
+"Верни ТОЛЬКО JSON-массив: по объекту на каждую строку таблицы {\"art\":\"артикул\",\"name\":\"наименование как напечатано\",\"stock\":число из колонки остаток,\"price\":число из колонки цена,\"sec\":\"раздел строки или пустая строка, если заголовка раздела выше этой строки на этом фото нет\"}. "+
+"Ничего не пропускай и не додумывай. Колонку акция игнорируй.";
+function drawCat(){
+ var sel=$("sec"),old=sel.value;sel.textContent="";var m={};
+ CAT.forEach(function(c){if(c.sec){m[c.sec]=m[c.sec]||0;if(c.stock>0)m[c.sec]++}});
+ Object.keys(m).forEach(function(k){var o=el("option",null,k+" ("+m[k]+" в наличии)");o.value=k;sel.appendChild(o)});
+ if(old&&m[old]!=null)sel.value=old;
+ var cs=$("csum");cs.textContent="";if(CAT.length){var ins=CAT.filter(function(c){return c.stock>0}).length;
+  [["Позиций: "+CAT.length],["В наличии по учёту: "+ins],["Разделов: "+Object.keys(m).length]].forEach(function(x){cs.appendChild(el("span","pill",x[0]))})}}
+$("cgo").onclick=async function(){
+ if(cbusy)return;cbusy=true;$("cgo").disabled=true;var last=CAT.length?CAT[CAT.length-1].sec:"",n=0;
+ try{for(var i=0;i<cph.length;i++){cst("Читаю лист "+(i+1)+" из "+cph.length+"…");
+  var o=await ask([{text:CP},{inline_data:{mime_type:"image/jpeg",data:await b64(cph[i],2560)}}]);
+  (Array.isArray(o)?o:(o.rows||[])).forEach(function(r){var art=norm(r.art);if(!art)return;var sec=norm(r.sec)||last;last=sec;
+   var stk=Number(r.stock)||0,pr=Number(r.price)||0,ex=CAT.find(function(c){return c.art===art});
+   if(ex){ex.stock=Math.max(ex.stock,stk);ex.price=Math.max(ex.price,pr);if(!ex.sec)ex.sec=sec}else CAT.push({art:art,name:norm(r.name),stock:stk,price:pr,sec:sec})});
+  n++;sv();drawCat()}
+  cph=[];cst("Готово: листов обработано — "+n+". Проверь число позиций и разделов.")}
+ catch(e){cph=cph.slice(n);cst("Обработано: "+n+".\n"+why(e),true)}
+ cbusy=false;cbtn()};
+$("cclr").onclick=function(){if(confirm("Очистить каталог и результат проверки?")){CAT=[];RES={sec:"",items:{},zero:[],extra:[],done:{}};sv();drawCat();render()}};
+
+var RK={found:2,unsure:1};
 $("go").onclick=async function(){
- if(busy)return;busy=true;$("go").disabled=true;var ok=0;
+ if(busy)return;var sec=$("sec").value;if(!sec){st("Сначала прочитай каталог и выбери раздел.",true);return}
+ var exp=CAT.filter(function(c){return c.sec===sec&&c.stock>0}),zr=CAT.filter(function(c){return c.sec===sec&&c.stock<=0});
+ if(!exp.length){st("В этом разделе нет позиций в наличии.",true);return}
+ if(RES.sec!==sec)RES={sec:sec,items:{},zero:[],extra:[],done:{}};
+ var P="Это фото участка полки продуктового магазина. Список товаров, которые по учёту должны быть в наличии (артикул — название):\n"+
+  exp.map(function(c){return c.art+" — "+c.name}).join("\n")+"\n\nДля каждого товара из этого списка, который ты ВИДИШЬ на фото, верни объект со статусом found. "+
+  "Если на полке похожий товар, но ты не уверен, что это именно он (другой вкус, объём, газ/негаз), статус unsure и пояснение в note. Товары, которых на фото нет, в ответ НЕ включай. Сопоставляй по бренду, вкусу, объёму, таре. "+
+  "Второй список: товары с нулевым остатком по учёту:\n"+(zr.length?zr.map(function(c){return c.art+" — "+c.name}).join("\n"):"(пусто)")+
+  "\nzero_seen: артикулы из второго списка, которые ты видишь на полке. extra: товары на полке, которых нет ни в одном списке (короткое описание). Не выдумывай. "+
+  "Ответ ТОЛЬКО JSON: {\"items\":[{\"art\":\"артикул\",\"status\":\"found|unsure\",\"note\":\"\"}],\"zero_seen\":[\"артикул\"],\"extra\":[\"описание\"]}";
+ busy=true;$("go").disabled=true;var n=0;
  try{for(var i=0;i<photos.length;i++){st("Смотрю снимок "+(i+1)+" из "+photos.length+"…");
-  var o=await ask([{text:PROMPT},{inline_data:{mime_type:"image/jpeg",data:await b64(photos[i],2560)}}]);merge(o);ok++;save();render()}
-  photos=[];st("Готово: обработано снимков — "+ok+". Проверь результат ниже.")}
- catch(e){photos=photos.slice(ok);st("Обработано: "+ok+".\n"+why(e),true)}
+  var o=await ask([{text:P},{inline_data:{mime_type:"image/jpeg",data:await b64(photos[i],2560)}}]);
+  (o.items||[]).forEach(function(x){var a=norm(x.art),sx=x.status==="found"?"found":"unsure";
+   if(!exp.some(function(c){return c.art===a}))return;var cur=RES.items[a];if(!cur||RK[sx]>RK[cur.s])RES.items[a]={s:sx,note:norm(x.note)}});
+  (o.zero_seen||[]).forEach(function(a){a=norm(a);if(RES.zero.indexOf(a)<0&&zr.some(function(c){return c.art===a}))RES.zero.push(a)});
+  (o.extra||[]).forEach(function(d){d=norm(d);if(d&&RES.extra.indexOf(d)<0)RES.extra.push(d)});
+  n++;sv();render()}
+  photos=[];st("Готово: снимков обработано — "+n+". «Не найдено» значит, что на снимках этого товара не видно.")}
+ catch(e){photos=photos.slice(n);st("Обработано: "+n+".\n"+why(e),true)}
  busy=false;btn()};
 
-function label(r){return r.name+(r.price?" — "+r.price+" ₽":"")}
+function lab(c){return c.name+(c.price?" — "+c.price+" ₽":"")}
+function item(cls,txt,note,art,chk){var d=el("div","it "+cls+(chk&&RES.done[art]?" done":""));
+ if(chk){var l=el("label"),cb=el("input");cb.type="checkbox";cb.checked=!!RES.done[art];cb.onchange=function(){RES.done[art]=cb.checked;sv();render()};l.appendChild(cb);
+  var t=el("div",null,txt);if(note)t.appendChild(el("div","m",note));l.appendChild(t);d.appendChild(l)}
+ else{d.appendChild(el("div",null,txt));if(note)d.appendChild(el("div","m",note))}return d}
+function grp(box,title,arr){if(arr.length){box.appendChild(el("h2",null,title+" ("+arr.length+")"));arr.forEach(function(d){box.appendChild(d)})}}
 function render(){
  var box=$("res"),pl=$("pills");box.textContent="";pl.textContent="";
- var c={empty:0,low:0,ok:0,nt:0};R.forEach(function(r){if(!r.done&&c[r.status]!=null)c[r.status]++});
- if(!R.length){box.appendChild(el("div","hint","Пока пусто."));return}
- [["❌ Пусто: "+c.empty],["⚠️ Мало: "+c.low],["❓ Без ценника: "+c.nt],["✅ Есть: "+c.ok]].forEach(function(x){pl.appendChild(el("span","pill",x[0]))});
- var groups=[["empty","Пусто: выложить"],["low","Мало: докладывать"],["nt","Товар без ценника"],["un","Не прочитано"],["ok","Есть"]];
- groups.forEach(function(gr){var items=R.filter(function(r){return r.status===gr[0]});if(!items.length)return;
-  box.appendChild(el("h2",null,gr[1]+" ("+items.length+")"));
-  items.forEach(function(r){var d=el("div","it "+(r.status==="un"?"nt":r.status)+(r.done?" done":""));
-   if(r.status==="empty"||r.status==="low"){var l=el("label"),cb=el("input");cb.type="checkbox";cb.checked=!!r.done;
-    cb.onchange=function(){r.done=cb.checked;save();render()};l.appendChild(cb);var t=el("div");t.appendChild(document.createTextNode(label(r)));
-    if(r.note||r.conf==="low")t.appendChild(el("div","m",(r.note||"")+(r.conf==="low"?" Нейросеть не уверена, проверь глазами.":"")));l.appendChild(t);d.appendChild(l)}
-   else{d.appendChild(el("div",null,r.status==="ok"?label(r):r.name));if(r.status==="ok"&&r.note)d.appendChild(el("div","m",r.note))}
-   box.appendChild(d)})})}
+ if(!RES.sec){box.appendChild(el("div","hint","Пока пусто."));return}
+ var exp=CAT.filter(function(c){return c.sec===RES.sec&&c.stock>0}),nf=[],un=[],fd=0;
+ exp.forEach(function(c){var r=RES.items[c.art];
+  if(!r)nf.push(item("empty",lab(c)+" · остаток по учёту: "+c.stock,"",c.art,true));
+  else if(r.s==="unsure")un.push(item("low",lab(c),r.note||"Не уверен, проверь глазами.",c.art,true));else fd++});
+ var zs=RES.zero.map(function(a){var c=CAT.find(function(x){return x.art===a});return item("nt",c.name,"На полке есть, а в учёте остаток 0. Возможна ошибка учёта.",a,false)});
+ var ex=RES.extra.map(function(d){return item("nt",d,"Нет в каталоге.","",false)});
+ [["❌ Не найдено: "+nf.length],["⚠️ Не уверен: "+un.length],["✅ Найдено: "+fd],["❓ Странности: "+(zs.length+ex.length)]].forEach(function(x){pl.appendChild(el("span","pill",x[0]))});
+ grp(box,"Не найдено на полке: выложить или искать на складе",nf);grp(box,"Не уверен",un);grp(box,"Стоит на полке, но в учёте 0",zs);grp(box,"Нет в каталоге",ex)}
 $("copy").onclick=function(){
- var L=R.filter(function(r){return(r.status==="empty"||r.status==="low")&&!r.done}).map(function(r){return"- "+(r.status==="empty"?"ПУСТО: ":"мало: ")+label(r)});
- var t=L.length?"Выложить на полку:\n"+L.join("\n"):"Выкладывать нечего.";
+ var L=CAT.filter(function(c){return c.sec===RES.sec&&c.stock>0&&!RES.items[c.art]&&!RES.done[c.art]}).map(function(c){return"- "+lab(c)});
+ var t=L.length?"Не найдено на полке ("+RES.sec+"):\n"+L.join("\n"):"Всё найдено.";
  (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(function(){st("Список скопирован.")}).catch(function(){prompt("Скопируй список:",t)})};
-$("clr").onclick=function(){if(confirm("Очистить результаты?")){R=[];save();render()}};
-render();btn();
+$("clr").onclick=function(){if(confirm("Сбросить результат проверки?")){RES={sec:"",items:{},zero:[],extra:[],done:{}};sv();render()}};
+drawCat();render();btn();cbtn();
 })();
 </script>
 </body>
